@@ -4,6 +4,8 @@ import glob
 import csv
 import os
 import copy
+import random
+
 
 import torch
 
@@ -14,7 +16,12 @@ import SimpleITK as sitk
 
 from utils.util import XyzTuple, xyz2irc
 from utils.disk import getCache
+from utils.logconf import logging
 
+log = logging.getLogger(__name__)
+# log.setLevel(logging.WARN)
+# log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 
 raw_cache = getCache('part2ch10_raw')
 
@@ -145,7 +152,7 @@ class LunaDataset(Dataset):
     #   unless they have a specific purpose like training the model to be robust to outliers ----------------------------------> representative unless on purpose
     # - The training set shouldn't offer unfair hints about the validation set that wouldn't be true for the real-world data
     #   for example include the same sample in both sets, this is knowns as a leak in the training set). ----------------------> training leak
-    def __init__(self, val_stride=0, isValSet_bool=None, series_uid=None): 
+    def __init__(self, val_stride=0, isValSet_bool=None, series_uid=None, sortby_str='random'): 
         #val_stride: sampling data every val_stride
         #isValSet_bool: keep only training/validation/everything
         self.candidateInfo_list = copy.copy(getCandidateInfoList())  #deep copy
@@ -162,8 +169,18 @@ class LunaDataset(Dataset):
         elif val_stride > 0:
             del self.candidateInfo_list[::val_stride] # delete the validations candidates -> train_data
             assert self.candidateInfo_list
+            
+        if sortby_str == 'random':
+            random.shuffle(self.candidateInfo_list)
+        elif sortby_str == 'series_uid':
+            self.candidateInfo_list.sort(key=lambda x: (x.series_uid, x.center_xyz))
+        elif sortby_str == 'label_and_size':
+            pass
+        else:
+            raise Exception("Unknown sort: " + repr(sortby_str))
+        
         #else -> everything
-        # log.info(f"{self!r}: {len(self.candidateInfo_list)} {'validation' if isValSet_bool else 'training'} samples")
+        log.info(f"{self!r}: {len(self.candidateInfo_list)} {'validation' if isValSet_bool else 'training'} samples")
 
     def __len__(self):
         return len(self.candidateInfo_list)

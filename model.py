@@ -27,7 +27,7 @@ class LunaBlock(nn.Module):
         return self.maxpool(block_out)
     
 class LunaModel(nn.Module):
-    def __init__(self, in_channels, conv_channels=8):
+    def __init__(self, in_channels=1, conv_channels=8):
         super().__init__()
         
         self.tail_batchnorm = nn.BatchNorm3d(1)
