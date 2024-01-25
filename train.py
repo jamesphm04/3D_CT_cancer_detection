@@ -33,13 +33,13 @@ class LunaTrainingApp:
         parser = argparse.ArgumentParser()
         parser.add_argument('--num-workers',
             help='Number of worker processes for background data loading',
-            default=8,
+            default=64,
             type=int                    
         )
         
         parser.add_argument('--batch-size',
             help='Batch size to use for training',
-            default=16,
+            default=256,
             type=int,
         )
         
@@ -50,8 +50,8 @@ class LunaTrainingApp:
         )
         
         parser.add_argument('--tb-prefix',
-            default='tensorboard',
             help="Data prefix to use for Tensorboard run.",
+            default='tensorboard',
         )
 
         parser.add_argument('comment',
@@ -60,13 +60,19 @@ class LunaTrainingApp:
             default='3D_CT_cancer_detection',
         )
         
+        parser.add_argument('--balanced',
+            help='Balance the training data to half positive, half negative.',
+            action='store_true',
+            default=False #True will convert ratio = 1:1
+        )
+        
         self.cli_args = parser.parse_args(sys_argv)
         self.time_str = datetime.datetime.now().strftime('%Y-%m-%d_%H.%M.%S')
         
-        self.use_cuda = torch.cuda.is_available()
-        self.device = torch.device('cuda' if self.use_cuda else 'cpu')
-        # self.use_cuda = False
-        # self.device = torch.device('cpu')
+        # self.use_cuda = torch.cuda.is_available()
+        # self.device = torch.device('cuda' if self.use_cuda else 'cpu')
+        self.use_cuda = False
+        self.device = torch.device('cpu')
         
         self.model = self.initModel()
         self.optimizer = self.initOptimizer()
@@ -93,7 +99,8 @@ class LunaTrainingApp:
     def initTrainDl(self):
         train_ds = LunaDataset(
             val_stride=10,
-            isValSet_bool=False
+            isValSet_bool=False,
+            ratio_int=self.cli_args.balanced
         )
         
         batch_size = self.cli_args.batch_size
@@ -223,7 +230,7 @@ class LunaTrainingApp:
             log_dir = os.path.join('runs', self.cli_args.tb_prefix, self.time_str)
 
             self.train_writer = SummaryWriter(
-                log_dir=log_dir + '-trn_cls-' + self.cli_args.comment)
+                log_dir=log_dir + '-train_cls-' + self.cli_args.comment)
             self.val_writer = SummaryWriter(
                 log_dir=log_dir + '-val_cls-' + self.cli_args.comment)
     
@@ -239,8 +246,11 @@ class LunaTrainingApp:
         neg_count = int(negPred_mask.sum())
         pos_count = int(posPred_mask.sum())
         
-        neg_correct = int((negLabel_mask & negPred_mask).sum())
-        pos_correct = int((posLabel_mask & posPred_mask).sum())
+        trueNeg_count = neg_correct = int((negLabel_mask & negPred_mask).sum())
+        truePos_count = pos_correct = int((posLabel_mask & posPred_mask).sum())
+        
+        falsePos_count = neg_count - neg_correct
+        falseNeg_count = pos_count - pos_correct
         
         metrics_dict = {}
         
@@ -248,15 +258,21 @@ class LunaTrainingApp:
         metrics_dict['loss/neg'] = metrics_t[METRICS_LOSS_NDX, negLabel_mask].mean()
         metrics_dict['loss/pos'] = metrics_t[METRICS_LOSS_NDX, posLabel_mask].mean()
         
-        metrics_dict['correct/all'] = (pos_correct + neg_correct) \
-            / np.float32(metrics_t.shape[1]) * 100
+        metrics_dict['correct/all'] = (pos_correct + neg_correct) / metrics_t.shape[1] * 100
+        metrics_dict['correct/neg'] = (neg_correct) / neg_count * 100
+        metrics_dict['correct/pos'] = (pos_correct) / pos_count * 100
             
-        metrics_dict['correct/neg'] = neg_correct / np.float32(neg_count) * 100
-        metrics_dict['correct/pos'] = pos_correct / np.float32(pos_count) * 100
+        precision = metrics_dict['pr/precision'] = truePos_count / np.float32(truePos_count + falsePos_count)
+        recall = metrics_dict['pr/recall'] = truePos_count / np.float32(truePos_count + falseNeg_count)
+        
+        metrics_dict['pr/f1_score'] = 2 * (precision * recall) / (precision + recall)
         
         log.info(
             ("E{} {:8} {loss/all:.4f} loss, "
                  + "{correct/all:-5.1f}% correct, "
+                 + "{pr/precision:.4f} precision, "
+                 + "{pr/recall:.4f} recall, "
+                 + "{pr/f1_score:.4f} f1 score"
             ).format(
                 epoch_ndx,
                 mode_str,

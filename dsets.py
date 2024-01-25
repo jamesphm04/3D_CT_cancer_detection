@@ -152,10 +152,11 @@ class LunaDataset(Dataset):
     #   unless they have a specific purpose like training the model to be robust to outliers ----------------------------------> representative unless on purpose
     # - The training set shouldn't offer unfair hints about the validation set that wouldn't be true for the real-world data
     #   for example include the same sample in both sets, this is knowns as a leak in the training set). ----------------------> training leak
-    def __init__(self, val_stride=0, isValSet_bool=None, series_uid=None, sortby_str='random'): 
+    def __init__(self, val_stride=0, isValSet_bool=None, series_uid=None, sortby_str='random', ratio_int=0): 
         #val_stride: sampling data every val_stride
         #isValSet_bool: keep only training/validation/everything
         self.candidateInfo_list = copy.copy(getCandidateInfoList())  #deep copy
+        self.ratio_int = ratio_int
         
         if series_uid: #if series_uid provided, only return nodules from that ct
             self.candidateInfo_list = [
@@ -179,14 +180,43 @@ class LunaDataset(Dataset):
         else:
             raise Exception("Unknown sort: " + repr(sortby_str))
         
+        self.negative_list = [
+            candidate for candidate in self.candidateInfo_list if not candidate.isNodule_bool 
+        ]
+        
+        self.positive_list = [
+            candidate for candidate in self.candidateInfo_list if candidate.isNodule_bool 
+        ]
+        
         #else -> everything
         log.info(f"{self!r}: {len(self.candidateInfo_list)} {'validation' if isValSet_bool else 'training'} samples")
 
+    def shuffleSamples(self):
+        if self.ratio_int:
+            random.shuffle(self.negative_list)
+            random.shuffle(self.positive_list)
+
     def __len__(self):
-        return len(self.candidateInfo_list)
+        if self.ratio_int:
+            return 500
+        else: 
+            return len(self.candidateInfo_list)
     
     def __getitem__(self, index):
-        candidateInfo_tup = self.candidateInfo_list[index]
+        # ration positive:negative
+        if self.ratio_int:
+            pos_index = index // (self.ratio_int + 1)
+
+            if index % (self.ratio_int + 1):
+                neg_index = index - 1 - pos_index
+                neg_index %= len(self.negative_list)
+                candidateInfo_tup = self.negative_list[neg_index]
+            else:
+                pos_index %= len(self.positive_list)
+                candidateInfo_tup = self.positive_list[pos_index]
+        else:
+            candidateInfo_tup = self.candidateInfo_list[index]
+            
         width_irc = (32, 48, 48) #depth, height, width
         
         candidate_a, center_irc = getCtRawCandidate(
